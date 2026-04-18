@@ -1,0 +1,113 @@
+{
+  "name": "cursor-usage-status",
+  "displayName": "Cursor Usage Status",
+  "description": "Shows Cursor plan usage (requests and allowance) in the status bar. Unofficial; uses Cursor local auth and API.",
+  "version": "0.1.0",
+  "publisher": "clearmeasurelabs",
+  "repository": "clearmeasurelabs/cursor-usage-status",
+  "icon": "images/cursor-usage-status-icon.png",
+  "homepage": "https://github.com/clearmeasurelabs/cursor-usage-status",
+  "bugs": "https://github.com/clearmeasurelabs/cursor-usage-status/issues",
+  "keywords": [
+    "cursor",
+    "usage",
+    "status",
+    "status bar",
+    "status bar item",
+    "status bar item cursor",
+    "status bar item cursor usage"
+  ],
+  "author": "Clear Measure Labs",
+  "contributors": [
+    "Ben Hooper <ben.hooper@clear-measure.com>"
+  ],
+  "maintainers": [
+    "Ben Hooper <ben.hooper@clear-measure.com>"
+  ],
+  "license": "MIT", 
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "cursorUsageStatusbar.refresh",
+        "title": "Cursor Usage: Refresh"
+      },
+      {
+        "command": "cursorUsageStatusbar.showDetails",
+        "title": "Cursor Usage: Show Details"
+      }
+    ],
+    "configuration": {
+      "title": "Cursor Usage Status Bar",
+      "properties": {
+        "cursorUsageStatusbar.apiBaseUrl": {
+          "type": "string",
+          "default": "https://api2.cursor.sh",
+          "description": "HTTPS base URL for Cursor usage API (Enterprise/proxy override)."
+        },
+        "cursorUsageStatusbar.pollIntervalSeconds": {
+          "type": "number",
+          "default": 300,
+          "minimum": 60,
+          "description": "Background refresh interval in seconds (minimum 60)."
+        },
+        "cursorUsageStatusbar.displayFormat": {
+          "type": "string",
+          "enum": [
+            "remaining",
+            "fraction",
+            "compact"
+          ],
+          "default": "remaining",
+          "description": "Status bar text style."
+        },
+        "cursorUsageStatusbar.includedModelKey": {
+          "type": "string",
+          "default": "gpt-4",
+          "description": "Model bucket key for included monthly requests (e.g. gpt-4)."
+        },
+        "cursorUsageStatusbar.warningRemainingPercent": {
+          "type": "number",
+          "default": 20,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Color warning when remaining included requests are at or below this percent of limit."
+        },
+        "cursorUsageStatusbar.criticalRemainingPercent": {
+          "type": "number",
+          "default": 10,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Color critical when remaining included requests are at or below this percent of limit."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package",
+    "test": "npm run compile && mocha \"out/test/**/*.test.js\""
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.0",
+    "mocha": "^10.4.0",
+    "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "sql.js": "^1.11.0"
+  }
+}

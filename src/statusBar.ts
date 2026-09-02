@@ -2,11 +2,13 @@ import * as vscode from 'vscode';
 import type { NormalizedUsage } from './usageModel';
 import { overageCents, remainingCents } from './usageModel';
 import { formatCentsUsd, formatModelLine, formatPrimaryText, formatTokens, severityFor } from './usageFormat';
+import { projectionLines, type UsageProjection } from './usageProjection';
 
 export type { StatusSeverity } from './usageFormat';
 
 function buildTooltipMarkdown(
   usage: NormalizedUsage,
+  projection: UsageProjection | undefined,
   lastUpdated: Date,
   lastError?: string
 ): vscode.MarkdownString {
@@ -36,6 +38,12 @@ function buildTooltipMarkdown(
     }
     if (usage.limitSource === 'manual') {
       md.appendMarkdown('_Limit from `manualMonthlyLimitDollars`, not from Cursor._\n\n');
+    }
+  }
+
+  if (projection) {
+    for (const line of projectionLines(projection, usage.limitCents)) {
+      md.appendMarkdown(`${line}\n\n`);
     }
   }
 
@@ -78,16 +86,18 @@ export class UsageStatusBar {
     this.item.dispose();
   }
 
-  update(
-    usage: NormalizedUsage,
-    displayFormat: string,
-    warningRemainingPct: number,
-    criticalRemainingPct: number,
-    lastUpdated: Date,
-    lastError?: string
-  ): void {
+  update(args: {
+    usage: NormalizedUsage;
+    projection?: UsageProjection;
+    displayFormat: string;
+    warningRemainingPct: number;
+    criticalRemainingPct: number;
+    lastUpdated: Date;
+    lastError?: string;
+  }): void {
+    const { usage, projection, displayFormat, warningRemainingPct, criticalRemainingPct } = args;
     this.item.text = formatPrimaryText(usage, displayFormat);
-    this.item.tooltip = buildTooltipMarkdown(usage, lastUpdated, lastError);
+    this.item.tooltip = buildTooltipMarkdown(usage, projection, args.lastUpdated, args.lastError);
     const sev = severityFor(usage, warningRemainingPct, criticalRemainingPct);
     if (sev === 'critical') {
       this.item.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');

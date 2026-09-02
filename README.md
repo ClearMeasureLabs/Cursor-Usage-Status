@@ -40,11 +40,29 @@ Reading `overallSpendCents` directly would require `GetTeamSpend`, whose respons
 
 - **Status bar:** remaining spend (e.g. **$74.23 left**), with `fraction` and `compact` alternatives.
 - **Over-limit is explicit:** shows **$12.40 over** with a critical background rather than pinning at "$0 left".
-- **Tooltip:** cycle start, spend vs limit, per-model breakdown with token counts, and cycle token totals.
+- **Tooltip:** cycle start, spend vs limit, pace projection, per-model breakdown with token counts, and cycle token totals.
+- **Pace projection:** extrapolates your current spend rate to the day the allowance runs out, and notifies you when that lands before the cycle resets.
 - **Free-credit usage is labelled,** not hidden — models running on team credit grants report tokens but no cost, and appear as `cursor-grok-4.5-high — free (297K in / 19K out)`.
 - Background polling (default 5 minutes, minimum 60 seconds).
 - Commands: **Cursor Usage: Refresh** and **Cursor Usage: Show Details**.
 - **Enterprise / proxy:** set `cursorUsageStatusbar.apiBaseUrl` to your approved `https://` origin; the bearer token is only ever sent to URLs under that origin.
+
+## Pace projection
+
+The extension extrapolates your spend rate over the elapsed part of the cycle to estimate when the allowance runs out, and grades how early that lands as a share of the cycle that would still remain:
+
+| Step | Meaning |
+| --- | --- |
+| 0 | On pace — the allowance lasts through the reset. |
+| 1 | Runs out before the reset, with under a quarter of the cycle left. |
+| 2 | A quarter or more of the cycle would still remain. |
+| 3 | Half or more of the cycle would still remain. |
+
+**Notifications fire only on escalation.** The first off-pace poll of a cycle notifies; an unchanged or improving projection stays silent, and the high-water mark is never lowered within a cycle, so a projection hovering around a threshold cannot nag on every poll. **Dismiss for this cycle** silences it until the next billing period, which re-arms automatically. Turn the whole thing off with `paceNotifications`.
+
+Projections are suppressed until at least **15% of the cycle has elapsed** *and* **5% of the limit has been spent** — a rate extrapolated from the first hours of a cycle, or from a few cents, predicts nothing. Until then the tooltip says it is too early to project.
+
+Cycle length comes from the reported cycle start plus one month (with month-end clamping, so Jan 31 maps to Feb 28 or 29). Cursor cycles are not reliably calendar-aligned — the 2026-08-24 pricing change produced a short Aug 24 – Sep 1 cycle — so an end date reported by the API always takes precedence when one is available.
 
 ## Requirements
 
@@ -71,6 +89,7 @@ All settings are under `cursorUsageStatusbar.*`:
 | `pollIntervalSeconds` | `300` | Refresh interval (minimum `60`). |
 | `displayFormat` | `remaining` | `remaining`, `fraction`, or `compact`. All show USD. |
 | `manualMonthlyLimitDollars` | `0` | Fallback monthly limit in USD when Cursor reports none. Ignored when a team limit is available. |
+| `paceNotifications` | `true` | Notify when spend is projected to exhaust the limit before the cycle resets. |
 | `warningRemainingPercent` | `20` | Warning color when remaining ≤ this % of limit. |
 | `criticalRemainingPercent` | `10` | Critical color when remaining ≤ this % of limit. |
 | `includedModelKey` | — | **Deprecated and ignored.** Request quotas no longer exist. |

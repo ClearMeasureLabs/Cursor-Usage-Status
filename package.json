@@ -77,6 +77,11 @@
           "minimum": 0,
           "markdownDescription": "Monthly spend limit in USD, used only when Cursor reports no per-user limit for your account (individual/Pro plans). Leave at `0` to show spend without a limit. Ignored when a team limit is available."
         },
+        "cursorUsageStatusbar.paceNotifications": {
+          "type": "boolean",
+          "default": true,
+          "description": "Notify when spend is projected to exhaust the monthly limit before the cycle resets. At most one notification per escalation, and dismissing silences it for the rest of the cycle."
+        },
         "cursorUsageStatusbar.warningRemainingPercent": {
           "type": "number",
           "default": 20,

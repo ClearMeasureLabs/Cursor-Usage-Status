@@ -12,13 +12,28 @@ import {
 } from './usageModel';
 import { parseAllowedApiBase } from './urlAllowlist';
 import { formatCentsUsd, formatTokens } from './usageFormat';
+import {
+  buildOverageMessage,
+  dismissFor,
+  INITIAL_NOTIFY_STATE,
+  nextNotification,
+  projectFromUsage,
+  projectionLines,
+  type NotifyState,
+  type UsageProjection,
+} from './usageProjection';
 import { UsageStatusBar } from './statusBar';
+
+const NOTIFY_STATE_KEY = 'cursorUsageStatusbar.notifyState';
+const DISMISS_ACTION = 'Dismiss for this cycle';
 
 let pollTimer: NodeJS.Timeout | undefined;
 let statusBar: UsageStatusBar | undefined;
+let extensionContext: vscode.ExtensionContext | undefined;
 
 type UsageSnapshot = {
   usage: NormalizedUsage;
+  projection?: UsageProjection;
   lastError?: string;
   lastUpdated: Date;
   apiBaseUrl: string;
@@ -41,9 +56,15 @@ function readConfig() {
     pollIntervalSeconds: clampPollSeconds(Number(cfg.get<number>('pollIntervalSeconds') ?? 300)),
     displayFormat: String(cfg.get<string>('displayFormat') ?? 'remaining'),
     manualMonthlyLimitDollars: Number.isFinite(manual) && manual > 0 ? manual : undefined,
+    paceNotifications: Boolean(cfg.get<boolean>('paceNotifications') ?? true),
     warningRemainingPct: Number(cfg.get<number>('warningRemainingPercent') ?? 20),
     criticalRemainingPct: Number(cfg.get<number>('criticalRemainingPercent') ?? 10),
   };
+}
+
+/** Tooltip markdown reused as plain text in the details dialog. */
+function stripBold(line: string): string {
+  return line.split('**').join('');
 }
 
 function formatDetail(snapshot: UsageSnapshot): string {
@@ -75,6 +96,12 @@ function formatDetail(snapshot: UsageSnapshot): string {
     }
   }
 
+  if (snapshot.projection) {
+    for (const line of projectionLines(snapshot.projection, usage.limitCents)) {
+      lines.push(stripBold(line));
+    }
+  }
+
   if (usage.models?.length) {
     lines.push('By model:');
     for (const m of usage.models) {
@@ -91,16 +118,47 @@ function formatDetail(snapshot: UsageSnapshot): string {
   return lines.join('\n');
 }
 
-function publish(snapshot: UsageSnapshot, displayFormat: string, warnPct: number, critPct: number): void {
+/**
+ * Raise a notification only when the projection first crosses into a worse pace step.
+ * State is persisted so the decision survives reloads, and dismissal is remembered for
+ * the rest of the billing cycle.
+ */
+async function maybeNotify(
+  usage: NormalizedUsage,
+  projection: UsageProjection,
+  enabled: boolean
+): Promise<void> {
+  const context = extensionContext;
+  if (!context || !enabled || usage.limitCents === undefined) {
+    return;
+  }
+  const state = context.globalState.get<NotifyState>(NOTIFY_STATE_KEY) ?? INITIAL_NOTIFY_STATE;
+  const { fire, state: nextState } = nextNotification(projection, state);
+  await context.globalState.update(NOTIFY_STATE_KEY, nextState);
+  if (!fire) {
+    return;
+  }
+  const message = buildOverageMessage(projection, usage.limitCents);
+  if (!message) {
+    return;
+  }
+  const choice = await vscode.window.showWarningMessage(message, DISMISS_ACTION);
+  if (choice === DISMISS_ACTION) {
+    await context.globalState.update(NOTIFY_STATE_KEY, dismissFor(projection, nextState));
+  }
+}
+
+function publish(snapshot: UsageSnapshot, c: ReturnType<typeof readConfig>): void {
   lastSnapshot = snapshot;
-  statusBar?.update(
-    snapshot.usage,
-    displayFormat,
-    warnPct,
-    critPct,
-    snapshot.lastUpdated,
-    snapshot.lastError
-  );
+  statusBar?.update({
+    usage: snapshot.usage,
+    projection: snapshot.projection,
+    displayFormat: c.displayFormat,
+    warningRemainingPct: c.warningRemainingPct,
+    criticalRemainingPct: c.criticalRemainingPct,
+    lastUpdated: snapshot.lastUpdated,
+    lastError: snapshot.lastError,
+  });
 }
 
 async function refreshUsage(): Promise<void> {
@@ -110,12 +168,7 @@ async function refreshUsage(): Promise<void> {
   const c = readConfig();
   const lastUpdated = new Date();
   const fail = (lastError: string) =>
-    publish(
-      { usage: {}, lastError, lastUpdated, apiBaseUrl: c.apiBaseUrl },
-      c.displayFormat,
-      c.warningRemainingPct,
-      c.criticalRemainingPct
-    );
+    publish({ usage: {}, lastError, lastUpdated, apiBaseUrl: c.apiBaseUrl }, c);
 
   const baseCheck = parseAllowedApiBase(c.apiBaseUrl);
   if (!baseCheck.ok) {
@@ -154,12 +207,9 @@ async function refreshUsage(): Promise<void> {
     lastError = e instanceof Error ? e.message : 'Unknown error.';
   }
 
-  publish(
-    { usage, lastError, lastUpdated, apiBaseUrl: c.apiBaseUrl },
-    c.displayFormat,
-    c.warningRemainingPct,
-    c.criticalRemainingPct
-  );
+  const projection = projectFromUsage(usage, lastUpdated);
+  publish({ usage, projection, lastError, lastUpdated, apiBaseUrl: c.apiBaseUrl }, c);
+  await maybeNotify(usage, projection, c.paceNotifications);
 }
 
 function schedulePolling(): void {
@@ -174,6 +224,7 @@ function schedulePolling(): void {
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  extensionContext = context;
   statusBar = new UsageStatusBar();
   statusBar.show();
 
@@ -185,6 +236,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
       statusBar?.dispose();
       statusBar = undefined;
+      extensionContext = undefined;
     })
   );
 
@@ -226,4 +278,5 @@ export function deactivate(): void {
   }
   statusBar?.dispose();
   statusBar = undefined;
+  extensionContext = undefined;
 }

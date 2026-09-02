@@ -1,33 +1,48 @@
-export type IncludedBucket = {
-  modelKey: string;
-  used: number;
-  limit: number;
-  /**
-   * `cents` = USD cents from Dashboard `planUsage` (Team / Pro / Ultra spend toward included allowance).
-   * `requests` = monthly model request counts from `/auth/usage` (typical Enterprise shape).
-   */
-  valueKind?: 'cents' | 'requests';
+/**
+ * Cursor moved from request quotas to token-based spend pricing (rolled out 2026-08-24).
+ *
+ * The old sources are gone: `/api/usage/summary` returns 404, `/auth/usage` reports
+ * `maxRequestUsage: null` / `maxTokenUsage: null`, and `GetCurrentPeriodUsage` no longer
+ * returns `planUsage`. Spend now comes from `GetAggregatedUsageEvents` and the per-user
+ * cap from `GetHardLimit`.
+ */
+
+export type ModelSpend = {
+  /** `modelIntent`, e.g. `cursor-grok-4.6-high`. */
+  model: string;
+  /** Chargeable cents. Absent when the model ran entirely on free credits. */
+  cents?: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
 };
 
-export type OnDemandSummary = {
-  spentDisplay?: string;
-  limitDisplay?: string;
-  /** Raw hints for tooltip when structure is unknown */
-  extraLines?: string[];
+export type TokenTotals = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
 };
+
+export type LimitSource = 'team' | 'manual';
 
 export type NormalizedUsage = {
+  /** ISO timestamp for the start of the current billing cycle. */
   periodStart?: string;
-  included?: IncludedBucket;
-  /** Optional token-related fields if API returns them */
-  tokenHints?: string[];
-  onDemand?: OnDemandSummary;
+  /** Chargeable spend this cycle, in USD cents. Fractional; free credits excluded. */
+  spentCents?: number;
+  /** Per-user monthly cap in USD cents, when one is known. */
+  limitCents?: number;
+  limitSource?: LimitSource;
+  /** Per-model breakdown, highest spend first. */
+  models?: ModelSpend[];
+  totals?: TokenTotals;
 };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
+/** Token counts arrive as strings (`"130810"`); cents arrive as numbers. */
 function num(v: unknown): number | undefined {
   if (typeof v === 'number' && Number.isFinite(v)) {
     return v;
@@ -43,297 +58,147 @@ function str(v: unknown): string | undefined {
   return typeof v === 'string' && v.length > 0 ? v : undefined;
 }
 
-/** Top-level / nested keys that are not per-model usage buckets. */
-const USAGE_META_KEYS = new Set([
-  'startOfMonth',
-  'monthlyInvoice',
-  'billingCycle',
-  'periodStart',
-  'cycleStart',
-  'billingCycleStart',
-  'subscription',
-  'plan',
-  'user',
-  'team',
-  'organization',
-  'metadata',
-  'error',
-  'message',
-]);
-
 /**
- * Derive used + limit from one model object (requests, tokens, or remaining + used).
- * Team and enterprise responses use different field names; some plans only expose token tallies.
+ * `GET /auth/usage` — every request/token bucket now reports null, so the only field
+ * still worth reading is the cycle start.
  */
-function extractUsedLimit(val: Record<string, unknown>): { used: number; limit: number } | undefined {
-  const nr = num(val.numRequests) ?? num(val.used) ?? num(val.requests);
-  const mr =
-    num(val.maxRequestUsage) ?? num(val.limit) ?? num(val.maxRequests) ?? num(val.requestLimit);
-  if (nr !== undefined && mr !== undefined) {
-    return { used: nr, limit: mr };
+export function parseAuthUsage(json: unknown): { periodStart?: string } {
+  if (!isRecord(json)) {
+    return {};
   }
-  const remReq = num(val.remainingRequests) ?? num(val.requestsRemaining) ?? num(val.requestsLeft);
-  if (nr !== undefined && remReq !== undefined) {
-    return { used: nr, limit: nr + remReq };
-  }
-
-  const nt = num(val.numTokens) ?? num(val.totalTokens) ?? num(val.tokens) ?? num(val.inputTokens);
-  const mt =
-    num(val.maxTokenUsage) ??
-    num(val.maxTokens) ??
-    num(val.tokenLimit) ??
-    num(val.includedTokens) ??
-    num(val.tokenQuota) ??
-    num(val.includedTokenLimit);
-  if (nt !== undefined && mt !== undefined) {
-    return { used: nt, limit: mt };
-  }
-  const remTok = num(val.remainingTokens) ?? num(val.tokensRemaining) ?? num(val.tokensLeft);
-  if (nt !== undefined && remTok !== undefined) {
-    return { used: nt, limit: nt + remTok };
-  }
-
-  return undefined;
-}
-
-/**
- * Collect model buckets from flat or nested `/auth/usage`-style JSON (walks a few levels deep).
- */
-function collectIncludedBucketsDeep(root: Record<string, unknown>, maxDepth = 3): IncludedBucket[] {
-  const out: IncludedBucket[] = [];
-  const seen = new Set<string>();
-
-  const walk = (obj: Record<string, unknown>, prefix: string, depth: number) => {
-    for (const [key, val] of Object.entries(obj)) {
-      if (USAGE_META_KEYS.has(key)) {
-        continue;
-      }
-      if (!isRecord(val)) {
-        continue;
-      }
-      const path = prefix ? `${prefix}.${key}` : key;
-      const pair = extractUsedLimit(val);
-      if (pair) {
-        if (!seen.has(path)) {
-          seen.add(path);
-          out.push({ modelKey: path, used: pair.used, limit: pair.limit });
-        }
-      } else if (depth < maxDepth) {
-        walk(val, path, depth + 1);
-      }
-    }
-  };
-
-  walk(root, '', 0);
-  return out;
-}
-
-function pickBucket(buckets: IncludedBucket[], preferredKey: string): IncludedBucket | undefined {
-  if (buckets.length === 0) {
-    return undefined;
-  }
-  const exact = buckets.find((b) => b.modelKey === preferredKey);
-  if (exact) {
-    return exact;
-  }
-  const child = buckets.find((b) => b.modelKey.startsWith(preferredKey + '.'));
-  if (child) {
-    return child;
-  }
-  const suffix = buckets.find((b) => b.modelKey.endsWith('.' + preferredKey));
-  if (suffix) {
-    return suffix;
-  }
-  return buckets[0];
-}
-
-function collectTokenHints(root: Record<string, unknown>): string[] {
-  const hints: string[] = [];
-  const scan = (obj: Record<string, unknown>, prefix: string) => {
-    for (const [k, v] of Object.entries(obj)) {
-      const lk = k.toLowerCase();
-      if (lk.includes('token') && (typeof v === 'number' || typeof v === 'string')) {
-        hints.push(`${prefix}${k}: ${String(v)}`);
-      }
-      if (isRecord(v)) {
-        scan(v, `${prefix}${k}.`);
-      }
-    }
-  };
-  scan(root, '');
-  return hints.slice(0, 12);
-}
-
-function harvestUsageFromRoot(json: Record<string, unknown>, preferredModelKey: string): NormalizedUsage {
   const periodStart =
     str(json.startOfMonth) ?? str(json.periodStart) ?? str(json.cycleStart) ?? str(json.billingCycleStart);
-  const buckets = collectIncludedBucketsDeep(json);
-  const included = pickBucket(buckets, preferredModelKey);
-  const tokenHints = collectTokenHints(json);
-  return {
-    periodStart,
-    included,
-    tokenHints: tokenHints.length > 0 ? tokenHints : undefined,
-  };
+  return { periodStart };
 }
 
 /**
- * Parse Cursor `/auth/usage` style JSON.
+ * Resolve the cycle window to query. Falls back to the first of the current UTC month
+ * when `/auth/usage` is unavailable — cycles are not always calendar-aligned (the
+ * 2026-08-24 pricing change produced a short Aug 24 - Sep 1 cycle), so this is a
+ * fallback rather than a rule.
  */
-export function parseAuthUsage(json: unknown, preferredModelKey: string): NormalizedUsage {
-  if (!isRecord(json)) {
-    return {};
-  }
-  return harvestUsageFromRoot(json, preferredModelKey);
-}
-
-/**
- * Best-effort parse for `/api/usage/summary` or similar blobs.
- * Team plans sometimes expose quota only here or use token fields; we reuse the same bucket rules as `/auth/usage`.
- */
-export function parseUsageSummary(json: unknown, preferredModelKey: string): NormalizedUsage {
-  if (!isRecord(json)) {
-    return {};
-  }
-  const harvested = harvestUsageFromRoot(json, preferredModelKey);
-  const lines: string[] = [];
-  const spent =
-    str(json.onDemandSpend) ??
-    str(json.onDemandSpent) ??
-    (json.totalSpend !== undefined ? String(json.totalSpend) : undefined);
-  const limit = str(json.onDemandLimit) ?? str(json.spendLimit);
-  if (spent) {
-    lines.push(`On-demand spend (raw): ${spent}`);
-  }
-  if (limit) {
-    lines.push(`On-demand limit (raw): ${limit}`);
-  }
-  let onDemand = harvested.onDemand;
-  if (spent || limit) {
-    onDemand = {
-      spentDisplay: spent,
-      limitDisplay: limit,
-      extraLines: lines.length > 0 ? lines : undefined,
-    };
-  }
-  const tokenHints = [...(harvested.tokenHints ?? []), ...collectTokenHints(json)];
-  const uniqueHints = [...new Set(tokenHints)];
-  return {
-    periodStart: harvested.periodStart,
-    included: harvested.included,
-    onDemand,
-    tokenHints: uniqueHints.length > 0 ? uniqueHints : undefined,
-  };
-}
-
-export function mergeUsage(auth: NormalizedUsage, summary: NormalizedUsage): NormalizedUsage {
-  const tokenHints = [...(auth.tokenHints ?? []), ...(summary.tokenHints ?? [])];
-  const unique = [...new Set(tokenHints)];
-  return {
-    periodStart: auth.periodStart ?? summary.periodStart,
-    included: auth.included ?? summary.included,
-    onDemand: summary.onDemand ?? auth.onDemand,
-    tokenHints: unique.length > 0 ? unique : undefined,
-  };
-}
-
-/**
- * Connect RPC `GetCurrentPeriodUsage` — Team/Pro/Ultra use `planUsage` (USD cents), not `/auth/usage` buckets.
- * @see https://github.com/robinebers/openusage/blob/main/docs/providers/cursor.md
- */
-export function parseDashboardPeriodUsage(json: unknown): NormalizedUsage {
-  if (!isRecord(json)) {
-    return {};
-  }
-  const pu = json.planUsage;
-  if (!isRecord(pu)) {
-    return {};
-  }
-  const limit = num(pu.limit);
-  const remaining = num(pu.remaining);
-  const includedSpend = num(pu.includedSpend);
-  const totalSpend = num(pu.totalSpend);
-
-  let used: number | undefined;
-  if (includedSpend !== undefined) {
-    used = includedSpend;
-  } else if (limit !== undefined && remaining !== undefined) {
-    used = Math.max(0, limit - remaining);
-  } else if (totalSpend !== undefined) {
-    used = totalSpend;
-  }
-
-  let periodStart: string | undefined;
-  const cycleStart = str(json.billingCycleStart);
-  if (cycleStart) {
-    const ms = Number(cycleStart);
-    if (Number.isFinite(ms)) {
-      try {
-        periodStart = new Date(ms).toISOString();
-      } catch {
-        periodStart = cycleStart;
-      }
-    } else {
-      periodStart = cycleStart;
+export function resolvePeriodStartMs(periodStart: string | undefined, now: Date): number {
+  if (periodStart) {
+    const parsed = Date.parse(periodStart);
+    if (Number.isFinite(parsed)) {
+      return parsed;
     }
   }
-
-  const tokenHints = collectTokenHints(json);
-
-  if (limit === undefined || !(limit > 0) || used === undefined) {
-    return {
-      periodStart,
-      tokenHints: tokenHints.length > 0 ? tokenHints : undefined,
-    };
-  }
-
-  const onDemand = extractSpendLimitOnDemand(json);
-
-  return {
-    periodStart,
-    included: { modelKey: 'planUsage', used, limit, valueKind: 'cents' },
-    onDemand,
-    tokenHints: tokenHints.length > 0 ? tokenHints : undefined,
-  };
-}
-
-function extractSpendLimitOnDemand(json: Record<string, unknown>): OnDemandSummary | undefined {
-  const sl = json.spendLimitUsage;
-  if (!isRecord(sl)) {
-    return undefined;
-  }
-  const pooledLimit = num(sl.pooledLimit);
-  const pooledUsed = num(sl.pooledUsed);
-  const individualLimit = num(sl.individualLimit);
-  const individualUsed = num(sl.individualUsed);
-  const limitType = str(sl.limitType);
-  const lines: string[] = [];
-  if (pooledLimit !== undefined && pooledLimit > 0) {
-    lines.push(
-      `Team pool (cents): used ${pooledUsed ?? 0} / ${pooledLimit} (remaining ${num(sl.pooledRemaining) ?? '—'})`
-    );
-  }
-  if (individualLimit !== undefined && individualLimit > 0) {
-    lines.push(
-      `Individual cap (cents): used ${individualUsed ?? 0} / ${individualLimit} (remaining ${num(sl.individualRemaining) ?? '—'})`
-    );
-  }
-  if (lines.length === 0) {
-    return undefined;
-  }
-  return { extraLines: lines, limitDisplay: limitType };
+  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
 }
 
 /**
- * Overlay Dashboard-derived included allowance (authoritative for Team vs legacy GET /auth/usage).
+ * `GetHardLimit` — `perUserMonthlyLimitDollars` is only returned when a `teamId` is sent.
+ * `hardLimit` is the team-wide total and is deliberately ignored.
  */
-export function mergeDashboardPriority(base: NormalizedUsage, dashboard: NormalizedUsage): NormalizedUsage {
-  const tokenHints = [...(base.tokenHints ?? []), ...(dashboard.tokenHints ?? [])];
-  const unique = [...new Set(tokenHints)];
+export function parseHardLimit(json: unknown): { limitCents?: number } {
+  if (!isRecord(json)) {
+    return {};
+  }
+  const dollars = num(json.perUserMonthlyLimitDollars);
+  if (dollars === undefined || !(dollars > 0)) {
+    return {};
+  }
+  return { limitCents: dollars * 100 };
+}
+
+/**
+ * `GetAggregatedUsageEvents` — `totalCostCents` is the sum of each event's `chargedCents`,
+ * i.e. already net of any enterprise discount and already excluding free-credit events.
+ * Free-credit models still appear in `aggregations` with token counts but no `totalCents`.
+ */
+export function parseAggregatedUsageEvents(json: unknown): {
+  spentCents?: number;
+  models?: ModelSpend[];
+  totals?: TokenTotals;
+} {
+  if (!isRecord(json)) {
+    return {};
+  }
+
+  const models: ModelSpend[] = [];
+  const raw = json.aggregations;
+  if (Array.isArray(raw)) {
+    for (const entry of raw) {
+      if (!isRecord(entry)) {
+        continue;
+      }
+      const model = str(entry.modelIntent);
+      if (!model) {
+        continue;
+      }
+      models.push({
+        model,
+        cents: num(entry.totalCents),
+        inputTokens: num(entry.inputTokens) ?? 0,
+        outputTokens: num(entry.outputTokens) ?? 0,
+        cacheReadTokens: num(entry.cacheReadTokens) ?? 0,
+      });
+    }
+  }
+  models.sort((a, b) => (b.cents ?? -1) - (a.cents ?? -1));
+
+  const spentCents = num(json.totalCostCents);
+  const inputTokens = num(json.totalInputTokens);
+  const outputTokens = num(json.totalOutputTokens);
+  const cacheReadTokens = num(json.totalCacheReadTokens);
+  const totals =
+    inputTokens !== undefined || outputTokens !== undefined || cacheReadTokens !== undefined
+      ? {
+          inputTokens: inputTokens ?? 0,
+          outputTokens: outputTokens ?? 0,
+          cacheReadTokens: cacheReadTokens ?? 0,
+        }
+      : undefined;
+
   return {
-    periodStart: dashboard.periodStart ?? base.periodStart,
-    included: dashboard.included ?? base.included,
-    onDemand: dashboard.onDemand ?? base.onDemand,
-    tokenHints: unique.length > 0 ? unique : undefined,
+    spentCents,
+    models: models.length > 0 ? models : undefined,
+    totals,
   };
+}
+
+/**
+ * Combine the three sources. A manual limit is only consulted when the team cap is absent,
+ * which is the case for accounts with no `teamId` (individual / Pro).
+ */
+export function buildUsage(args: {
+  auth: { periodStart?: string };
+  hardLimit: { limitCents?: number };
+  aggregated: { spentCents?: number; models?: ModelSpend[]; totals?: TokenTotals };
+  manualLimitDollars?: number;
+}): NormalizedUsage {
+  const { auth, hardLimit, aggregated, manualLimitDollars } = args;
+
+  let limitCents = hardLimit.limitCents;
+  let limitSource: LimitSource | undefined = limitCents !== undefined ? 'team' : undefined;
+  if (limitCents === undefined && manualLimitDollars !== undefined && manualLimitDollars > 0) {
+    limitCents = manualLimitDollars * 100;
+    limitSource = 'manual';
+  }
+
+  return {
+    periodStart: auth.periodStart,
+    spentCents: aggregated.spentCents,
+    limitCents,
+    limitSource,
+    models: aggregated.models,
+    totals: aggregated.totals,
+  };
+}
+
+/** Remaining allowance in cents, or undefined when no limit is known. Never negative. */
+export function remainingCents(usage: NormalizedUsage): number | undefined {
+  if (usage.limitCents === undefined || usage.spentCents === undefined) {
+    return undefined;
+  }
+  return Math.max(0, usage.limitCents - usage.spentCents);
+}
+
+/** Spend beyond the cap in cents. Zero when inside the cap or when no limit is known. */
+export function overageCents(usage: NormalizedUsage): number {
+  if (usage.limitCents === undefined || usage.spentCents === undefined) {
+    return 0;
+  }
+  return Math.max(0, usage.spentCents - usage.limitCents);
 }

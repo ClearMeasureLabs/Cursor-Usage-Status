@@ -1,8 +1,8 @@
 {
   "name": "cursor-usage-status",
   "displayName": "Cursor Usage Status",
-  "description": "Shows Cursor plan usage (requests and allowance) in the status bar. Unofficial; uses Cursor local auth and API.",
-  "version": "0.1.0",
+  "description": "Shows Cursor token-based plan spend against your monthly limit in the status bar. Unofficial; uses Cursor local auth and API.",
+  "version": "0.2.0",
   "publisher": "clearmeasurelabs",
   "repository": "clearmeasurelabs/cursor-usage-status",
   "icon": "images/cursor-usage-status-icon.png",
@@ -13,8 +13,9 @@
     "usage",
     "status",
     "status bar",
-    "status bar item",
-    "status bar item cursor",
+    "spend",
+    "tokens",
+    "token pricing",
     "status bar item cursor usage"
   ],
   "author": "Clear Measure Labs",
@@ -24,7 +25,7 @@
   "maintainers": [
     "Ben Hooper <ben.hooper@clear-measure.com>"
   ],
-  "license": "MIT", 
+  "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -68,36 +69,44 @@
             "compact"
           ],
           "default": "remaining",
-          "description": "Status bar text style."
+          "description": "Status bar text style. All formats show USD spend."
         },
-        "cursorUsageStatusbar.includedModelKey": {
-          "type": "string",
-          "default": "gpt-4",
-          "description": "Model bucket key for included monthly requests (e.g. gpt-4)."
+        "cursorUsageStatusbar.manualMonthlyLimitDollars": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "markdownDescription": "Monthly spend limit in USD, used only when Cursor reports no per-user limit for your account (individual/Pro plans). Leave at `0` to show spend without a limit. Ignored when a team limit is available."
         },
         "cursorUsageStatusbar.warningRemainingPercent": {
           "type": "number",
           "default": 20,
           "minimum": 0,
           "maximum": 100,
-          "description": "Color warning when remaining included requests are at or below this percent of limit."
+          "description": "Color warning when remaining spend allowance is at or below this percent of the limit."
         },
         "cursorUsageStatusbar.criticalRemainingPercent": {
           "type": "number",
           "default": 10,
           "minimum": 0,
           "maximum": 100,
-          "description": "Color critical when remaining included requests are at or below this percent of limit."
+          "description": "Color critical when remaining spend allowance is at or below this percent of the limit."
+        },
+        "cursorUsageStatusbar.includedModelKey": {
+          "type": "string",
+          "default": "gpt-4",
+          "description": "No longer used.",
+          "markdownDeprecationMessage": "**Deprecated:** Cursor replaced per-model request quotas with token-based spend pricing, so there is no model bucket to select. This setting is ignored and will be removed in a future release."
         }
       }
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run clean && npm run compile",
+    "clean": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\"",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "package": "vsce package",
-    "test": "npm run compile && mocha \"out/test/**/*.test.js\""
+    "test": "npm run clean && npm run compile && mocha \"out/test/**/*.test.js\""
   },
   "devDependencies": {
     "@types/mocha": "^10.0.6",

@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 
 const ACCESS_KEY = 'cursorAuth/accessToken';
+const TEAM_KEY = 'cursorAuth/cachedTeam';
 
 export function resolveCursorStateDbPath(): string {
   const home = os.homedir();
@@ -20,10 +21,10 @@ export function resolveCursorStateDbPath(): string {
 }
 
 /**
- * Read Cursor access token from local SQLite. Returns null if missing/unreadable.
- * Token is never logged or persisted by callers.
+ * Read one value out of Cursor local SQLite state. Returns null if missing/unreadable.
+ * Values are never logged or persisted by callers.
  */
-export async function readCursorAccessToken(): Promise<string | null> {
+async function readStateValue(key: string): Promise<string | null> {
   const dbPath = resolveCursorStateDbPath();
   if (!fs.existsSync(dbPath)) {
     return null;
@@ -44,8 +45,9 @@ export async function readCursorAccessToken(): Promise<string | null> {
   const db = new SQL.Database(new Uint8Array(fileBuffer));
   try {
     const stmt = db.prepare('SELECT value FROM ItemTable WHERE key = ? LIMIT 1');
-    stmt.bind([ACCESS_KEY]);
+    stmt.bind([key]);
     if (!stmt.step()) {
+      stmt.free();
       return null;
     }
     const row = stmt.getAsObject() as { value?: string | Uint8Array };
@@ -61,4 +63,36 @@ export async function readCursorAccessToken(): Promise<string | null> {
   } finally {
     db.close();
   }
+}
+
+/** Read Cursor access token from local SQLite. Returns null if missing/unreadable. */
+export async function readCursorAccessToken(): Promise<string | null> {
+  return readStateValue(ACCESS_KEY);
+}
+
+/**
+ * Team id Cursor caches locally. Required for perUserMonthlyLimitDollars from
+ * GetHardLimit - without a team id that response carries only the team-wide total.
+ * Returns null for individual accounts, which have no per-user cap to report.
+ */
+export async function readCursorTeamId(): Promise<number | null> {
+  const raw = await readStateValue(TEAM_KEY);
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      const id = (parsed as { teamId?: unknown }).teamId;
+      if (typeof id === 'number' && Number.isFinite(id)) {
+        return id;
+      }
+      if (typeof id === 'string' && id.trim() !== '' && Number.isFinite(Number(id))) {
+        return Number(id);
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }

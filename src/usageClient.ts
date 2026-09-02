@@ -1,10 +1,32 @@
 import * as https from 'https';
+import type { IncomingMessage } from 'http';
 import type { AllowedOriginResult } from './urlAllowlist';
 import { assertSameOrigin, parseAllowedApiBase, usageUrl } from './urlAllowlist';
+import { parseAuthUsage, resolvePeriodStartMs } from './usageModel';
 
 export type FetchResult =
   | { ok: true; status: number; json: unknown }
   | { ok: false; status?: number; error: string };
+
+const DASHBOARD = '/aiserver.v1.DashboardService';
+
+function readResponse(res: IncomingMessage, resolve: (r: FetchResult) => void): void {
+  const chunks: Buffer[] = [];
+  res.on('data', (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+  res.on('end', () => {
+    const body = Buffer.concat(chunks).toString('utf8');
+    const status = res.statusCode ?? 0;
+    if (status < 200 || status >= 300) {
+      resolve({ ok: false, status, error: `HTTP ${status}` });
+      return;
+    }
+    try {
+      resolve({ ok: true, status, json: body.length ? JSON.parse(body) : {} });
+    } catch {
+      resolve({ ok: false, status, error: 'Response was not valid JSON.' });
+    }
+  });
+}
 
 function httpsGet(url: URL, token: string, allowed: AllowedOriginResult & { ok: true }): Promise<FetchResult> {
   assertSameOrigin(url, allowed);
@@ -20,32 +42,13 @@ function httpsGet(url: URL, token: string, allowed: AllowedOriginResult & { ok: 
         },
         timeout: 20_000,
       },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
-        res.on('end', () => {
-          const body = Buffer.concat(chunks).toString('utf8');
-          const status = res.statusCode ?? 0;
-          if (status < 200 || status >= 300) {
-            resolve({ ok: false, status, error: `HTTP ${status}` });
-            return;
-          }
-          try {
-            const json = body.length ? JSON.parse(body) : {};
-            resolve({ ok: true, status, json });
-          } catch {
-            resolve({ ok: false, status, error: 'Response was not valid JSON.' });
-          }
-        });
-      }
+      (res) => readResponse(res, resolve)
     );
     req.on('timeout', () => {
       req.destroy();
       resolve({ ok: false, error: 'Request timed out.' });
     });
-    req.on('error', () => {
-      resolve({ ok: false, error: 'Network error.' });
-    });
+    req.on('error', () => resolve({ ok: false, error: 'Network error.' }));
     req.end();
   });
 }
@@ -72,57 +75,62 @@ function httpsPostJson(
         },
         timeout: 20_000,
       },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
-        res.on('end', () => {
-          const resBody = Buffer.concat(chunks).toString('utf8');
-          const status = res.statusCode ?? 0;
-          if (status < 200 || status >= 300) {
-            resolve({ ok: false, status, error: `HTTP ${status}` });
-            return;
-          }
-          try {
-            const json = resBody.length ? JSON.parse(resBody) : {};
-            resolve({ ok: true, status, json });
-          } catch {
-            resolve({ ok: false, status, error: 'Response was not valid JSON.' });
-          }
-        });
-      }
+      (res) => readResponse(res, resolve)
     );
     req.on('timeout', () => {
       req.destroy();
       resolve({ ok: false, error: 'Request timed out.' });
     });
-    req.on('error', () => {
-      resolve({ ok: false, error: 'Network error.' });
-    });
+    req.on('error', () => resolve({ ok: false, error: 'Network error.' }));
     req.write(payload);
     req.end();
   });
 }
 
+export type UsageFetch = {
+  auth: FetchResult;
+  hardLimit: FetchResult;
+  aggregated: FetchResult;
+  allowed: AllowedOriginResult & { ok: true };
+};
+
+/**
+ * Two round trips: /auth/usage and GetHardLimit run together, then the resolved cycle
+ * start bounds the GetAggregatedUsageEvents query.
+ *
+ * The date range is sent explicitly rather than relying on the server empty-body default.
+ * That default currently resolves to the active cycle, but it is undocumented and this API
+ * has already deleted one route and emptied another out from under this extension.
+ */
 export async function fetchCursorUsage(
   apiBaseUrl: string,
-  token: string
-): Promise<{
-  auth: FetchResult;
-  summary: FetchResult;
-  dashboard: FetchResult;
-  allowed: AllowedOriginResult & { ok: true };
-}> {
+  token: string,
+  teamId: number | null,
+  now: Date = new Date()
+): Promise<UsageFetch> {
   const allowed = parseAllowedApiBase(apiBaseUrl);
   if (!allowed.ok) {
     throw new Error(allowed.reason);
   }
-  const authUrl = usageUrl(allowed.baseUrl, '/auth/usage');
-  const summaryUrl = usageUrl(allowed.baseUrl, '/api/usage/summary');
-  const dashboardUrl = usageUrl(allowed.baseUrl, '/aiserver.v1.DashboardService/GetCurrentPeriodUsage');
-  const [auth, summary, dashboard] = await Promise.all([
-    httpsGet(authUrl, token, allowed),
-    httpsGet(summaryUrl, token, allowed),
-    httpsPostJson(dashboardUrl, token, {}, allowed),
+
+  const [auth, hardLimit] = await Promise.all([
+    httpsGet(usageUrl(allowed.baseUrl, '/auth/usage'), token, allowed),
+    httpsPostJson(
+      usageUrl(allowed.baseUrl, DASHBOARD + '/GetHardLimit'),
+      token,
+      teamId === null ? {} : { teamId },
+      allowed
+    ),
   ]);
-  return { auth, summary, dashboard, allowed };
+
+  const periodStart = auth.ok ? parseAuthUsage(auth.json).periodStart : undefined;
+  const startMs = resolvePeriodStartMs(periodStart, now);
+  const aggregated = await httpsPostJson(
+    usageUrl(allowed.baseUrl, DASHBOARD + '/GetAggregatedUsageEvents'),
+    token,
+    { startDate: String(startMs), endDate: String(now.getTime()) },
+    allowed
+  );
+
+  return { auth, hardLimit, aggregated, allowed };
 }

@@ -4,7 +4,10 @@
   "description": "Shows Cursor token-based plan spend against your monthly limit in the status bar. Unofficial; uses Cursor local auth and API.",
   "version": "0.2.0",
   "publisher": "clearmeasurelabs",
-  "repository": "clearmeasurelabs/cursor-usage-status",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ClearMeasureLabs/Cursor-Usage-Status.git"
+  },
   "icon": "images/cursor-usage-status-icon.png",
   "homepage": "https://github.com/clearmeasurelabs/cursor-usage-status",
   "bugs": "https://github.com/clearmeasurelabs/cursor-usage-status/issues",
@@ -114,11 +117,11 @@
     "test": "npm run clean && npm run compile && mocha \"out/test/**/*.test.js\""
   },
   "devDependencies": {
-    "@types/mocha": "^10.0.6",
+    "@types/mocha": "^10.0.10",
     "@types/node": "^20.14.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.2.0",
-    "mocha": "^10.4.0",
+    "mocha": "^12.0.0",
     "typescript": "^5.6.3"
   },
   "dependencies": {

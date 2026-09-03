@@ -103,6 +103,8 @@ All settings are under `cursorUsageStatusbar.*`:
 
 ## Development
 
+Requires **Node 20.19+ or 22+**. The build toolchain (`@vscode/vsce` via `undici`, and `mocha` 12) declares `node >=20.18.1`; on Node 18 `vsce package` fails with `ReferenceError: File is not defined`.
+
 ```bash
 npm install
 npm run compile

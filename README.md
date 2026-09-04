@@ -6,15 +6,15 @@ Unofficial [Cursor](https://cursor.com) extension for VS Code–compatible edito
 
 ## Demo
 
-Team/Pro Usage:
+Spend against your monthly limit, with the per-model breakdown and pace projection in the tooltip:
 
-![TeamPro](images/teamusage.png)
+![Token-based usage](images/tokenusage.png)
 
-Enterprise Usage:
+Past the limit, the status bar names the overage rather than pinning at "$0 left":
 
-![Enterprise](images/enterpriseusage.png)
+![Over limit](images/overlimit.png)
 
-> Screenshots predate the 0.2.0 token-pricing rewrite and show the old request-based display.
+> Rendered examples, not screenshots. The text is produced by the extension's own formatting code against a live account; the over-limit figures scale a real usage mix past the cap to show that state. Team, Business and Enterprise all render identically — they resolve through the same spend path.
 
 ## How usage is resolved
 

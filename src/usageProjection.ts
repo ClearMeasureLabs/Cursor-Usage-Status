@@ -281,8 +281,11 @@ export function projectionLines(projection: UsageProjection, limitCents?: number
         return [`**Pace:** on track to last through ${resets}.`];
       }
       const early = daysBetween(projection.exhaustionMs, projection.periodEndMs);
-      const exhausts = formatShortDate(projection.exhaustionMs);
       const limit = limitCents === undefined ? 'your limit' : formatCentsUsd(limitCents);
+      if (projection.alreadyExhausted) {
+        return [`**Pace:** ${limit} reached, with ${early} days left before the ${resets} reset.`];
+      }
+      const exhausts = formatShortDate(projection.exhaustionMs);
       return [
         `**Pace:** projected to reach ${limit} on ${exhausts}, ${early} days before the ${resets} reset.`,
       ];

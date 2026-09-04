@@ -324,6 +324,18 @@ describe('projectionLines', () => {
     assert.ok(lines[0].includes('projected to reach'));
   });
 
+  it('does not forecast a limit that has already been reached', () => {
+    const spent = projectUsage({
+      spent: LIMIT + 1240,
+      limit: LIMIT,
+      periodStart: P_START,
+      now: at(0.6),
+    });
+    const lines = projectionLines(spent, LIMIT);
+    assert.ok(!lines[0].includes('projected to reach'), 'must not forecast a past event');
+    assert.ok(lines[0].includes('reached'));
+  });
+
   it('says so when it is too early to project', () => {
     const lines = projectionLines({ kind: 'too-early', reason: 'elapsed' }, LIMIT);
     assert.ok(lines[0].includes('too early'));

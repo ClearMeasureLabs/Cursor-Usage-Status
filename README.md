@@ -6,15 +6,57 @@ Unofficial [Cursor](https://cursor.com) extension for VS Code–compatible edito
 
 ## Demo
 
-Spend against your monthly limit, with the per-model breakdown and pace projection in the tooltip:
+Spend against your monthly limit, with the per-model breakdown and pace projection in the hover tooltip:
 
-![Token-based usage](images/tokenusage.png)
+```
+┌─ Cursor Usage ────────────────────────────────────────────┐
+│ Cycle start:       2026-09-01T00:00:00.000Z               │
+│ Spend this cycle:  $14.33 / $75.00                        │
+│ Remaining:         $60.67                                 │
+│ Pace:              too early in the cycle to project.     │
+│                                                           │
+│ By model:                                                 │
+│   claude-opus-5-thinking-high  $9.40   55K in / 45K out   │
+│   cursor-grok-4.6-high         $4.93   838K in / 72K out  │
+│   cursor-grok-4.5-high          free   396K in / 35K out  │
+│                                                           │
+│ Tokens:            1.3M in / 152K out / 10.7M cache read  │
+│ Last updated:      9/3/2026, 3:42:59 PM                   │
+└───────────────────────────────────────────────────────────┘
+─────────────────────────────────────────────────────────────
+                               Cursor Tab    ⚡ $60.67 left
+```
 
-Past the limit, the status bar names the overage rather than pinning at "$0 left":
+Past the limit, the status bar names the overage instead of pinning at "$0 left", and turns red:
 
-![Over limit](images/overlimit.png)
+```
+┌─ Cursor Usage ────────────────────────────────────────────────────────────────┐
+│ Cycle start:       2026-09-01T00:00:00.000Z                                   │
+│ Spend this cycle:  $87.40 / $75.00                                            │
+│ Over limit by:     $12.40                                                     │
+│ Pace:              $75.00 reached, with 12 days left before the Oct 1 reset.  │
+│                                                                               │
+│ By model:                                                                     │
+│   claude-opus-5-thinking-high  $57.30   335K in / 274K out                    │
+│   cursor-grok-4.6-high         $30.10   5.1M in / 441K out                    │
+│   cursor-grok-4.5-high           free   2.4M in / 211K out                    │
+│                                                                               │
+│ Tokens:            7.9M in / 926K out / 65.5M cache read                      │
+│ Last updated:      9/19/2026, 4:12:07 PM                                      │
+└───────────────────────────────────────────────────────────────────────────────┘
+─────────────────────────────────────────────────────────────────────────────────
+                                                   Cursor Tab    ⚡ $12.40 over
+```
 
-> Rendered examples, not screenshots. The text is produced by the extension's own formatting code against a live account; the over-limit figures scale a real usage mix past the cap to show that state. Team, Business and Enterprise all render identically — they resolve through the same spend path.
+On an account with no per-user cap (individual/Pro), the same view shows spend alone:
+
+```
+│ Spend this cycle:  $14.33                                 │
+│   (no per-user limit reported for this account)           │
+                               Cursor Tab    ⚡ $14.33 used
+```
+
+> Illustrations, not screenshots. The wording and figures come from the extension's own formatting code run against a live account, so they cannot drift from what the tooltip actually renders; the over-limit example scales a real usage mix past the cap, since exceeding a $75 limit to photograph it is not worth $75. Team, Business and Enterprise render identically — they resolve through the same spend path.
 
 ## How usage is resolved
 

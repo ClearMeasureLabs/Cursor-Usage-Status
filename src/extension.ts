@@ -200,9 +200,13 @@ async function refreshUsage(): Promise<void> {
       aggregated: aggregated.ok ? parseAggregatedUsageEvents(aggregated.json) : {},
       manualLimitDollars: c.manualMonthlyLimitDollars,
     });
-    if (usage.spentCents === undefined && !aggregated.ok) {
-      lastError = aggregated.error + (aggregated.status !== undefined ? ` (${aggregated.status})` : '');
-    }
+
+    const fmt = (r: { error: string; status?: number }) => r.error + (r.status !== undefined ? ` (${r.status})` : '');
+    const parts: string[] = [];
+    if (!auth.ok) parts.push(`auth: ${fmt(auth)}`);
+    if (!hardLimit.ok) parts.push(`hardLimit: ${fmt(hardLimit)}`);
+    if (!aggregated.ok) parts.push(`aggregated: ${fmt(aggregated)}`);
+    lastError = parts.length ? parts.join('; ') : undefined;
   } catch (e) {
     lastError = e instanceof Error ? e.message : 'Unknown error.';
   }

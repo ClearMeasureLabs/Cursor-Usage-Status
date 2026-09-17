@@ -188,6 +188,7 @@ export function projectFromUsage(usage: NormalizedUsage, now: Date): UsageProjec
     spent: usage.spentCents,
     limit: usage.limitCents,
     periodStart: usage.periodStart,
+    periodEnd: usage.periodEnd,
     now,
   });
 }

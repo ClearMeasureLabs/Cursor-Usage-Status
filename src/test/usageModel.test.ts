@@ -58,6 +58,13 @@ describe('usageModel', () => {
       assert.strictEqual(parseAuthUsage(AUTH_USAGE).periodStart, '2026-09-01T00:00:00.000Z');
     });
 
+    it('reads an API-reported cycle end', () => {
+      assert.strictEqual(
+        parseAuthUsage({ billingCycleEnd: '2026-09-20T00:00:00.000Z' }).periodEnd,
+        '2026-09-20T00:00:00.000Z'
+      );
+    });
+
     it('returns nothing for a non-object body', () => {
       assert.deepStrictEqual(parseAuthUsage(null), {});
     });
@@ -140,6 +147,18 @@ describe('usageModel', () => {
       assert.strictEqual(u.limitCents, 7500);
       assert.strictEqual(u.limitSource, 'team');
       assert.strictEqual(u.periodStart, '2026-09-01T00:00:00.000Z');
+    });
+
+    it('retains an API-reported cycle end', () => {
+      const u = buildUsage({
+        ...base,
+        auth: parseAuthUsage({
+          startOfMonth: '2026-09-01T00:00:00.000Z',
+          billingCycleEnd: '2026-09-20T00:00:00.000Z',
+        }),
+        hardLimit: parseHardLimit(HARD_LIMIT_TEAM),
+      });
+      assert.strictEqual(u.periodEnd, '2026-09-20T00:00:00.000Z');
     });
 
     it('prefers the team cap over a manual override', () => {

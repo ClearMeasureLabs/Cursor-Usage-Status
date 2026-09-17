@@ -8,6 +8,7 @@ import {
   INITIAL_NOTIFY_STATE,
   nextNotification,
   periodIdOf,
+  projectFromUsage,
   projectUsage,
   projectionLines,
   resolvePeriodEnd,
@@ -186,6 +187,20 @@ describe('projectUsage pace', () => {
       periodEnd: apiEnd,
       now: at(0.25),
     });
+    assert.strictEqual(p.kind === 'projected' && p.periodEndMs, apiEnd);
+  });
+
+  it('projects a normalized snapshot against its API period end', () => {
+    const apiEnd = Date.UTC(2026, 8, 20);
+    const p = projectFromUsage(
+      {
+        spentCents: 4000,
+        limitCents: LIMIT,
+        periodStart: new Date(P_START).toISOString(),
+        periodEnd: new Date(apiEnd).toISOString(),
+      },
+      at(0.25)
+    );
     assert.strictEqual(p.kind === 'projected' && p.periodEndMs, apiEnd);
   });
 

@@ -28,6 +28,8 @@ export type LimitSource = 'team' | 'manual';
 export type NormalizedUsage = {
   /** ISO timestamp for the start of the current billing cycle. */
   periodStart?: string;
+  /** ISO timestamp for the end of the current billing cycle. */
+  periodEnd?: string;
   /** Chargeable spend this cycle, in USD cents. Fractional; free credits excluded. */
   spentCents?: number;
   /** Per-user monthly cap in USD cents, when one is known. */
@@ -59,16 +61,18 @@ function str(v: unknown): string | undefined {
 }
 
 /**
- * `GET /auth/usage` — every request/token bucket now reports null, so the only field
- * still worth reading is the cycle start.
+ * `GET /auth/usage` — every request/token bucket now reports null, so only the cycle
+ * boundaries are still worth reading.
  */
-export function parseAuthUsage(json: unknown): { periodStart?: string } {
+export function parseAuthUsage(json: unknown): { periodStart?: string; periodEnd?: string } {
   if (!isRecord(json)) {
     return {};
   }
   const periodStart =
     str(json.startOfMonth) ?? str(json.periodStart) ?? str(json.cycleStart) ?? str(json.billingCycleStart);
-  return { periodStart };
+  const periodEnd =
+    str(json.endOfMonth) ?? str(json.periodEnd) ?? str(json.cycleEnd) ?? str(json.billingCycleEnd);
+  return { periodStart, periodEnd };
 }
 
 /**
@@ -164,7 +168,7 @@ export function parseAggregatedUsageEvents(json: unknown): {
  * which is the case for accounts with no `teamId` (individual / Pro).
  */
 export function buildUsage(args: {
-  auth: { periodStart?: string };
+  auth: { periodStart?: string; periodEnd?: string };
   hardLimit: { limitCents?: number };
   aggregated: { spentCents?: number; models?: ModelSpend[]; totals?: TokenTotals };
   manualLimitDollars?: number;
@@ -180,6 +184,7 @@ export function buildUsage(args: {
 
   return {
     periodStart: auth.periodStart,
+    periodEnd: auth.periodEnd,
     spentCents: aggregated.spentCents,
     limitCents,
     limitSource,

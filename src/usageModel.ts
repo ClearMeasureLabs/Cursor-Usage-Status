@@ -79,7 +79,8 @@ export function parseAuthUsage(json: unknown): { periodStart?: string } {
  */
 export function resolvePeriodStartMs(periodStart: string | undefined, now: Date): number {
   if (periodStart) {
-    const parsed = Date.parse(periodStart);
+    const trimmed = periodStart.trim();
+    const parsed = /^-?\d+$/.test(trimmed) ? Number(trimmed) : Date.parse(trimmed);
     if (Number.isFinite(parsed)) {
       return parsed;
     }

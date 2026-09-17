@@ -117,6 +117,11 @@ describe('usageModel', () => {
       assert.strictEqual(ms, Date.UTC(2026, 7, 24));
     });
 
+    it('accepts an epoch-millisecond string from auth usage', () => {
+      const ms = resolvePeriodStartMs('1755993600000', new Date('2026-08-31T12:00:00Z'));
+      assert.strictEqual(ms, Date.UTC(2025, 7, 24));
+    });
+
     it('falls back to the first of the current UTC month', () => {
       const ms = resolvePeriodStartMs(undefined, new Date('2026-09-02T00:42:00Z'));
       assert.strictEqual(ms, Date.UTC(2026, 8, 1));

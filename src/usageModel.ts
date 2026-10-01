@@ -3,8 +3,9 @@
  *
  * The old sources are gone: `/api/usage/summary` returns 404, `/auth/usage` reports
  * `maxRequestUsage: null` / `maxTokenUsage: null`, and `GetCurrentPeriodUsage` no longer
- * returns `planUsage`. Spend now comes from `GetAggregatedUsageEvents` and the per-user
- * cap from `GetHardLimit`.
+ * returns `planUsage`. Spend now comes from `GetAggregatedUsageEvents`. The per-user limit
+ * comes from `/auth/usage-summary` (the payload the Usage page renders, including per-member
+ * overrides), with `GetHardLimit`'s team-default cap as the fallback.
  */
 
 export type ModelSpend = {
@@ -23,7 +24,10 @@ export type TokenTotals = {
   cacheReadTokens: number;
 };
 
-export type LimitSource = 'team' | 'manual';
+export type LimitSource = 'summary' | 'team' | 'manual';
+
+/** Last limit read from a successful usage summary, keyed by the cycle it belongs to. */
+export type SummaryLimitCache = { periodStart: string; limitCents: number };
 
 export type NormalizedUsage = {
   /** ISO timestamp for the start of the current billing cycle. */
@@ -35,6 +39,8 @@ export type NormalizedUsage = {
   /** Per-user monthly cap in USD cents, when one is known. */
   limitCents?: number;
   limitSource?: LimitSource;
+  /** True when the limit was carried over because this refresh's usage summary failed. */
+  limitIsLastGood?: boolean;
   /** Per-model breakdown, highest spend first. */
   models?: ModelSpend[];
   totals?: TokenTotals;
@@ -108,6 +114,24 @@ export function parseHardLimit(json: unknown): { limitCents?: number } {
 }
 
 /**
+ * `GET /auth/usage-summary` — `individualUsage.overall.limit` is the per-user limit the Usage
+ * page shows, in cents, including any per-member override of the team default.
+ * `teamUsage` is the team-wide pool and is deliberately ignored.
+ */
+export function parseUsageSummary(json: unknown): { isUnlimited: boolean; limitCents?: number } {
+  if (!isRecord(json)) {
+    return { isUnlimited: false };
+  }
+  const isUnlimited = json.isUnlimited === true;
+  const overall = isRecord(json.individualUsage) ? json.individualUsage.overall : undefined;
+  if (!isRecord(overall) || overall.enabled === false) {
+    return { isUnlimited };
+  }
+  const limit = num(overall.limit);
+  return limit !== undefined && limit > 0 ? { isUnlimited, limitCents: limit } : { isUnlimited };
+}
+
+/**
  * `GetAggregatedUsageEvents` — `totalCostCents` is the sum of each event's `chargedCents`,
  * i.e. already net of any enterprise discount and already excluding free-credit events.
  * Free-credit models still appear in `aggregations` with token counts but no `totalCents`.
@@ -164,32 +188,72 @@ export function parseAggregatedUsageEvents(json: unknown): {
 }
 
 /**
- * Combine the three sources. A manual limit is only consulted when the team cap is absent,
- * which is the case for accounts with no `teamId` (individual / Pro).
+ * Combine the sources. The limit is resolved in order, recomputed on every refresh:
+ *
+ * 1. `manualLimitDollars`, when set — an explicit setting beats anything Cursor reports.
+ * 2. A successful usage summary: `isUnlimited` means no limit at all; otherwise its
+ *    per-user limit, when enabled and positive.
+ * 3. When the summary call failed (`summary` undefined), the last good summary limit from
+ *    the same cycle, so a transient error does not flip the bar back to the team default.
+ * 4. `GetHardLimit`'s per-user team default.
+ *
+ * There is deliberately no max across sources: a lowered override must win over a higher
+ * team default. `summaryCache` is what the caller should remember for the next refresh.
  */
 export function buildUsage(args: {
   auth: { periodStart?: string; periodEnd?: string };
   hardLimit: { limitCents?: number };
+  /** Undefined when the usage-summary request failed. */
+  summary?: { isUnlimited: boolean; limitCents?: number };
+  lastSummaryLimit?: SummaryLimitCache;
   aggregated: { spentCents?: number; models?: ModelSpend[]; totals?: TokenTotals };
   manualLimitDollars?: number;
-}): NormalizedUsage {
-  const { auth, hardLimit, aggregated, manualLimitDollars } = args;
+}): { usage: NormalizedUsage; summaryCache?: SummaryLimitCache } {
+  const { auth, hardLimit, summary, lastSummaryLimit, aggregated, manualLimitDollars } = args;
 
-  let limitCents = hardLimit.limitCents;
-  let limitSource: LimitSource | undefined = limitCents !== undefined ? 'team' : undefined;
-  if (limitCents === undefined && manualLimitDollars !== undefined && manualLimitDollars > 0) {
+  const lastGood =
+    lastSummaryLimit && auth.periodStart !== undefined && lastSummaryLimit.periodStart === auth.periodStart
+      ? lastSummaryLimit
+      : undefined;
+  let summaryCache: SummaryLimitCache | undefined;
+  if (summary === undefined) {
+    summaryCache = lastGood;
+  } else if (!summary.isUnlimited && summary.limitCents !== undefined && auth.periodStart !== undefined) {
+    summaryCache = { periodStart: auth.periodStart, limitCents: summary.limitCents };
+  }
+
+  let limitCents: number | undefined;
+  let limitSource: LimitSource | undefined;
+  let limitIsLastGood = false;
+  if (manualLimitDollars !== undefined && manualLimitDollars > 0) {
     limitCents = manualLimitDollars * 100;
     limitSource = 'manual';
+  } else if (summary?.isUnlimited) {
+    // No cap: show spend only rather than falling through to the team default.
+  } else if (summary?.limitCents !== undefined) {
+    limitCents = summary.limitCents;
+    limitSource = 'summary';
+  } else if (summary === undefined && lastGood) {
+    limitCents = lastGood.limitCents;
+    limitSource = 'summary';
+    limitIsLastGood = true;
+  } else if (hardLimit.limitCents !== undefined) {
+    limitCents = hardLimit.limitCents;
+    limitSource = 'team';
   }
 
   return {
-    periodStart: auth.periodStart,
-    periodEnd: auth.periodEnd,
-    spentCents: aggregated.spentCents,
-    limitCents,
-    limitSource,
-    models: aggregated.models,
-    totals: aggregated.totals,
+    usage: {
+      periodStart: auth.periodStart,
+      periodEnd: auth.periodEnd,
+      spentCents: aggregated.spentCents,
+      limitCents,
+      limitSource,
+      limitIsLastGood: limitIsLastGood || undefined,
+      models: aggregated.models,
+      totals: aggregated.totals,
+    },
+    summaryCache,
   };
 }
 

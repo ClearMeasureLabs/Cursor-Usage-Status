@@ -2,7 +2,7 @@
   "name": "cursor-usage-status",
   "displayName": "Cursor Usage Status",
   "description": "Shows Cursor token-based plan spend against your monthly limit in the status bar. Unofficial; uses Cursor local auth and API.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "clearmeasurelabs",
   "repository": {
     "type": "git",
@@ -79,7 +79,7 @@
           "type": "number",
           "default": 0,
           "minimum": 0,
-          "markdownDescription": "Monthly spend limit in USD, used only when Cursor reports no per-user limit for your account (individual/Pro plans). Leave at `0` to show spend without a limit. Ignored when a team limit is available."
+          "markdownDescription": "Monthly spend limit in USD. Overrides the limit Cursor reports. Leave at `0` to use Cursor's limit, or to show spend only when Cursor reports none."
         },
         "cursorUsageStatusbar.paceNotifications": {
           "type": "boolean",

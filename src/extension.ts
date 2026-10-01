@@ -7,8 +7,10 @@ import {
   parseAggregatedUsageEvents,
   parseAuthUsage,
   parseHardLimit,
+  parseUsageSummary,
   remainingCents,
   type NormalizedUsage,
+  type SummaryLimitCache,
 } from './usageModel';
 import { parseAllowedApiBase } from './urlAllowlist';
 import { formatCentsUsd, formatTokens } from './usageFormat';
@@ -40,6 +42,8 @@ type UsageSnapshot = {
 };
 
 let lastSnapshot: UsageSnapshot | undefined;
+/** In memory only: covers a failed usage-summary call later in the same cycle. */
+let lastSummaryLimit: SummaryLimitCache | undefined;
 
 function clampPollSeconds(raw: number): number {
   if (!Number.isFinite(raw)) {
@@ -93,6 +97,9 @@ function formatDetail(snapshot: UsageSnapshot): string {
     );
     if (usage.limitSource === 'manual') {
       lines.push('Limit source: manualMonthlyLimitDollars setting.');
+    }
+    if (usage.limitIsLastGood) {
+      lines.push("Limit from last successful refresh; Cursor's usage summary is unavailable.");
     }
   }
 
@@ -193,18 +200,23 @@ async function refreshUsage(): Promise<void> {
   let usage: NormalizedUsage = {};
   let lastError: string | undefined;
   try {
-    const { auth, hardLimit, aggregated } = await fetchCursorUsage(c.apiBaseUrl, token, teamId, lastUpdated);
-    usage = buildUsage({
+    const { auth, hardLimit, summary, aggregated } = await fetchCursorUsage(c.apiBaseUrl, token, teamId, lastUpdated);
+    const built = buildUsage({
       auth: auth.ok ? parseAuthUsage(auth.json) : {},
       hardLimit: hardLimit.ok ? parseHardLimit(hardLimit.json) : {},
+      summary: summary.ok ? parseUsageSummary(summary.json) : undefined,
+      lastSummaryLimit,
       aggregated: aggregated.ok ? parseAggregatedUsageEvents(aggregated.json) : {},
       manualLimitDollars: c.manualMonthlyLimitDollars,
     });
+    usage = built.usage;
+    lastSummaryLimit = built.summaryCache;
 
     const fmt = (r: { error: string; status?: number }) => r.error + (r.status !== undefined ? ` (${r.status})` : '');
     const parts: string[] = [];
     if (!auth.ok) parts.push(`auth: ${fmt(auth)}`);
     if (!hardLimit.ok) parts.push(`hardLimit: ${fmt(hardLimit)}`);
+    if (!summary.ok) parts.push(`summary: ${fmt(summary)}`);
     if (!aggregated.ok) parts.push(`aggregated: ${fmt(aggregated)}`);
     lastError = parts.length ? parts.join('; ') : undefined;
   } catch (e) {

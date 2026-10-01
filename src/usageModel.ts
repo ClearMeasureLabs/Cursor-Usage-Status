@@ -135,6 +135,10 @@ export function parseUsageSummary(json: unknown): { isUnlimited: boolean; limitC
  * `GetAggregatedUsageEvents` — `totalCostCents` is the sum of each event's `chargedCents`,
  * i.e. already net of any enterprise discount and already excluding free-credit events.
  * Free-credit models still appear in `aggregations` with token counts but no `totalCents`.
+ *
+ * Connect serializes proto3 defaults by omitting them, so a cycle with no chargeable spend
+ * yet (e.g. just after the reset) comes back as `{}`. A missing `totalCostCents` on a
+ * successful response therefore means zero, not unknown.
  */
 export function parseAggregatedUsageEvents(json: unknown): {
   spentCents?: number;
@@ -167,7 +171,7 @@ export function parseAggregatedUsageEvents(json: unknown): {
   }
   models.sort((a, b) => (b.cents ?? -1) - (a.cents ?? -1));
 
-  const spentCents = num(json.totalCostCents);
+  const spentCents = num(json.totalCostCents) ?? 0;
   const inputTokens = num(json.totalInputTokens);
   const outputTokens = num(json.totalOutputTokens);
   const cacheReadTokens = num(json.totalCacheReadTokens);

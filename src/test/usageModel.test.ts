@@ -129,6 +129,24 @@ describe('usageModel', () => {
       );
     });
 
+    it('reads an empty body as zero spend, since proto3 JSON omits zero values', () => {
+      // Live response on 2026-10-01, minutes after the cycle reset.
+      const u = parseAggregatedUsageEvents({});
+      assert.strictEqual(u.spentCents, 0);
+      assert.strictEqual(u.models, undefined);
+      assert.strictEqual(u.totals, undefined);
+    });
+
+    it('reads omitted totalCostCents as zero when only free-credit models ran', () => {
+      const u = parseAggregatedUsageEvents({ aggregations: [AGGREGATED.aggregations[1]] });
+      assert.strictEqual(u.spentCents, 0);
+      assert.strictEqual(u.models?.[0]?.cents, undefined);
+    });
+
+    it('still reports unknown spend for a non-object body', () => {
+      assert.deepStrictEqual(parseAggregatedUsageEvents(null), {});
+    });
+
     it('survives an empty aggregation list', () => {
       const u = parseAggregatedUsageEvents({ aggregations: [], totalCostCents: 0 });
       assert.strictEqual(u.spentCents, 0);

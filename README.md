@@ -60,15 +60,23 @@ On an account with no per-user cap (individual/Pro), the same view shows spend a
 
 ## How usage is resolved
 
-Cursor bills by **token spend** against a per-user monthly dollar cap. The extension makes three calls against your configured **`apiBaseUrl`** (default `https://api2.cursor.sh`) per refresh:
+Cursor bills by **token spend** against a per-user monthly dollar cap. The extension makes four calls against your configured **`apiBaseUrl`** (default `https://api2.cursor.sh`) per refresh:
 
 | Value | Source | Field |
 | --- | --- | --- |
 | Spend this cycle | `POST /aiserver.v1.DashboardService/GetAggregatedUsageEvents` | `totalCostCents`, `aggregations[]` |
-| Per-user monthly limit | `POST /aiserver.v1.DashboardService/GetHardLimit` | `perUserMonthlyLimitDollars` |
+| Per-user monthly limit | `GET /auth/usage-summary` | `individualUsage.overall.limit` (cents) |
+| Per-user limit fallback | `POST /aiserver.v1.DashboardService/GetHardLimit` | `perUserMonthlyLimitDollars` |
 | Billing cycle start | `GET /auth/usage` | `startOfMonth` |
 
-`GetHardLimit` only returns `perUserMonthlyLimitDollars` when a **team id** is sent. The extension reads that id from Cursor's local database (`cursorAuth/cachedTeam`) — there is nothing to configure.
+The limit is recomputed on every refresh, so a change made mid-cycle shows up on the next poll. The order is:
+
+1. `manualMonthlyLimitDollars`, when set.
+2. The usage summary — the same figure the Usage page shows, **including a per-member override** of the team default. `isUnlimited: true` means no limit at all.
+3. If the usage-summary call fails, the last good summary limit from the same cycle, held in memory only. The tooltip says when this is in use.
+4. `GetHardLimit`'s `perUserMonthlyLimitDollars`, which is the **team default** and does not reflect per-member overrides. It is only returned when a **team id** is sent; the extension reads that id from Cursor's local database (`cursorAuth/cachedTeam`) — there is nothing to configure.
+
+Team-wide totals (`GetHardLimit.hardLimit`, `teamUsage.onDemand`) are never used as the per-user limit.
 
 `totalCostCents` is the sum of each usage event's `chargedCents`, so it is **already net of any enterprise discount** and **already excludes free-credit usage**. The date range is sent explicitly rather than relying on the server's undocumented empty-body default.
 
@@ -119,7 +127,7 @@ Cycle length comes from the reported cycle start plus one month (with month-end 
 | Plan | Status |
 | --- | --- |
 | **Team / Business / Enterprise** | Verified against a live account. Spend and per-user limit both resolve. |
-| **Individual / Pro** | **Untested.** Without a team id, Cursor reports no per-user limit, so the status bar shows spend only (e.g. **$4.68 used**) with no color thresholds. Set `manualMonthlyLimitDollars` to get a limit, remaining figure, and warning colors. |
+| **Individual / Pro** | **Untested.** Likely reports the plan's included amount via `/auth/usage-summary`. If no limit resolves, the status bar shows spend only (e.g. **$4.68 used**) with no color thresholds. Set `manualMonthlyLimitDollars` to override. |
 
 ## Configuration
 
@@ -130,7 +138,7 @@ All settings are under `cursorUsageStatusbar.*`:
 | `apiBaseUrl` | `https://api2.cursor.sh` | HTTPS origin for all usage API calls. |
 | `pollIntervalSeconds` | `300` | Refresh interval (minimum `60`). |
 | `displayFormat` | `remaining` | `remaining`, `fraction`, or `compact`. All show USD. |
-| `manualMonthlyLimitDollars` | `0` | Fallback monthly limit in USD when Cursor reports none. Ignored when a team limit is available. |
+| `manualMonthlyLimitDollars` | `0` | Monthly limit in USD. Overrides the limit Cursor reports. Leave at `0` to use Cursor's limit. |
 | `paceNotifications` | `true` | Notify when spend is projected to exhaust the limit before the cycle resets. |
 | `warningRemainingPercent` | `20` | Warning color when remaining ≤ this % of limit. |
 | `criticalRemainingPercent` | `10` | Critical color when remaining ≤ this % of limit. |

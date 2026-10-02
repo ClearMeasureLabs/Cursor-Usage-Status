@@ -90,13 +90,14 @@ function httpsPostJson(
 export type UsageFetch = {
   auth: FetchResult;
   hardLimit: FetchResult;
+  summary: FetchResult;
   aggregated: FetchResult;
   allowed: AllowedOriginResult & { ok: true };
 };
 
 /**
- * Two round trips: /auth/usage and GetHardLimit run together, then the resolved cycle
- * start bounds the GetAggregatedUsageEvents query.
+ * Two round trips: /auth/usage, GetHardLimit and /auth/usage-summary run together, then the
+ * resolved cycle start bounds the GetAggregatedUsageEvents query.
  *
  * The date range is sent explicitly rather than relying on the server empty-body default.
  * That default currently resolves to the active cycle, but it is undocumented and this API
@@ -113,7 +114,7 @@ export async function fetchCursorUsage(
     throw new Error(allowed.reason);
   }
 
-  const [auth, hardLimit] = await Promise.all([
+  const [auth, hardLimit, summary] = await Promise.all([
     httpsGet(usageUrl(allowed.baseUrl, '/auth/usage'), token, allowed),
     httpsPostJson(
       usageUrl(allowed.baseUrl, DASHBOARD + '/GetHardLimit'),
@@ -121,6 +122,7 @@ export async function fetchCursorUsage(
       teamId === null ? {} : { teamId },
       allowed
     ),
+    httpsGet(usageUrl(allowed.baseUrl, '/auth/usage-summary'), token, allowed),
   ]);
 
   const periodStart = auth.ok ? parseAuthUsage(auth.json).periodStart : undefined;
@@ -132,5 +134,5 @@ export async function fetchCursorUsage(
     allowed
   );
 
-  return { auth, hardLimit, aggregated, allowed };
+  return { auth, hardLimit, summary, aggregated, allowed };
 }

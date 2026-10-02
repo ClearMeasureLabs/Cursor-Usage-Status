@@ -39,6 +39,9 @@ function buildTooltipMarkdown(
     if (usage.limitSource === 'manual') {
       md.appendMarkdown('_Limit from `manualMonthlyLimitDollars`, not from Cursor._\n\n');
     }
+    if (usage.limitIsLastGood) {
+      md.appendMarkdown("_Limit from last successful refresh; Cursor's usage summary is unavailable._\n\n");
+    }
   }
 
   if (projection) {

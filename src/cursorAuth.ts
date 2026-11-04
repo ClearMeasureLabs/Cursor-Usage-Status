@@ -1,82 +1,77 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { DatabaseSync } from 'node:sqlite';
 
 const ACCESS_KEY = 'cursorAuth/accessToken';
 const TEAM_KEY = 'cursorAuth/cachedTeam';
 
-export function resolveCursorStateDbPath(): string {
+/** Cursor's Electron userData directory (holds `Local State` and `User/globalStorage`). */
+export function resolveCursorUserDataDir(): string {
   const home = os.homedir();
   if (process.platform === 'win32') {
     const appData = process.env.APPDATA;
     if (!appData) {
       throw new Error('APPDATA environment variable is not set.');
     }
-    return path.join(appData, 'Cursor', 'User', 'globalStorage', 'state.vscdb');
+    return path.join(appData, 'Cursor');
   }
   if (process.platform === 'darwin') {
-    return path.join(home, 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage', 'state.vscdb');
+    return path.join(home, 'Library', 'Application Support', 'Cursor');
   }
-  return path.join(home, '.config', 'Cursor', 'User', 'globalStorage', 'state.vscdb');
+  return path.join(home, '.config', 'Cursor');
 }
 
+export function resolveCursorStateDbPath(): string {
+  return path.join(resolveCursorUserDataDir(), 'User', 'globalStorage', 'state.vscdb');
+}
+
+export type CursorLocalState = {
+  /** Raw stored value: a plaintext JWT, or `cursor-safe-storage:v1:` ciphertext. */
+  accessToken: string | null;
+  teamId: number | null;
+};
+
 /**
- * Read one value out of Cursor local SQLite state. Returns null if missing/unreadable.
- * Values are never logged or persisted by callers.
+ * Read the auth token and cached team id from Cursor local SQLite in one read-only open.
+ *
+ * node:sqlite reads only the pages it needs and applies the WAL, so values Cursor wrote
+ * moments ago (a refreshed token, say) are visible. This matters because state.vscdb can
+ * exceed a gigabyte. Values are never logged or persisted by callers.
  */
-async function readStateValue(key: string): Promise<string | null> {
-  const dbPath = resolveCursorStateDbPath();
+export function readCursorLocalState(dbPath: string = resolveCursorStateDbPath()): CursorLocalState {
   if (!fs.existsSync(dbPath)) {
-    return null;
+    return { accessToken: null, teamId: null };
   }
-  const fileBuffer = fs.readFileSync(dbPath);
-  const wasmPath = path.join(__dirname, '..', 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
-  if (!fs.existsSync(wasmPath)) {
-    throw new Error('sql.js WASM file is missing from the extension install.');
-  }
-  const wasmBinary = fs.readFileSync(wasmPath);
-  const sqlJsMod = await import('sql.js');
-  type InitSqlJs = (opts?: { wasmBinary?: Buffer | Uint8Array }) => Promise<import('sql.js').SqlJsStatic>;
-  const initSqlJs: InitSqlJs =
-    typeof (sqlJsMod as { default?: InitSqlJs }).default === 'function'
-      ? (sqlJsMod as { default: InitSqlJs }).default
-      : (sqlJsMod as unknown as InitSqlJs);
-  const SQL = await initSqlJs({ wasmBinary });
-  const db = new SQL.Database(new Uint8Array(fileBuffer));
+  const db = new DatabaseSync(dbPath, { readOnly: true, timeout: 2_000 });
   try {
     const stmt = db.prepare('SELECT value FROM ItemTable WHERE key = ? LIMIT 1');
-    stmt.bind([key]);
-    if (!stmt.step()) {
-      stmt.free();
-      return null;
-    }
-    const row = stmt.getAsObject() as { value?: string | Uint8Array };
-    stmt.free();
-    const raw = row.value;
-    if (typeof raw === 'string' && raw.length > 0) {
-      return raw;
-    }
-    if (raw instanceof Uint8Array) {
-      return Buffer.from(raw).toString('utf8') || null;
-    }
-    return null;
+    const read = (key: string): string | null => {
+      const row = stmt.get(key) as { value?: unknown } | undefined;
+      return valueToString(row?.value);
+    };
+    return { accessToken: read(ACCESS_KEY), teamId: parseCachedTeamId(read(TEAM_KEY)) };
   } finally {
     db.close();
   }
 }
 
-/** Read Cursor access token from local SQLite. Returns null if missing/unreadable. */
-export async function readCursorAccessToken(): Promise<string | null> {
-  return readStateValue(ACCESS_KEY);
+function valueToString(raw: unknown): string | null {
+  if (typeof raw === 'string') {
+    return raw.length > 0 ? raw : null;
+  }
+  if (raw instanceof Uint8Array) {
+    return Buffer.from(raw).toString('utf8') || null;
+  }
+  return null;
 }
 
 /**
- * Team id Cursor caches locally. Required for perUserMonthlyLimitDollars from
- * GetHardLimit - without a team id that response carries only the team-wide total.
+ * Team id from Cursor's `cursorAuth/cachedTeam` JSON. Required for perUserMonthlyLimitDollars
+ * from GetHardLimit - without a team id that response carries only the team-wide total.
  * Returns null for individual accounts, which have no per-user cap to report.
  */
-export async function readCursorTeamId(): Promise<number | null> {
-  const raw = await readStateValue(TEAM_KEY);
+export function parseCachedTeamId(raw: string | null): number | null {
   if (!raw) {
     return null;
   }

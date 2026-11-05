@@ -2,7 +2,7 @@
 
 Unofficial [Cursor](https://cursor.com) extension for VS Code–compatible editors. It shows your **token-based plan spend** against your **monthly limit** in the **status bar**.
 
-**Important:** Cursor does not publish a stable third-party usage API. This extension reads your local Cursor sign-in token from SQLite and calls Cursor-hosted HTTPS endpoints. **Those endpoints or response shapes can change at any time** and break the extension — as they did in August 2026, when Cursor replaced request quotas with token pricing and deleted the routes this extension previously depended on. This project is not affiliated with or endorsed by Cursor.
+**Important:** Cursor does not publish a stable third-party usage API. This extension reads your local Cursor sign-in token from SQLite and calls Cursor-hosted HTTPS endpoints. **Those endpoints, response shapes, or the local token format can change at any time** and break the extension — as they did in August 2026, when Cursor replaced request quotas with token pricing and deleted the routes this extension previously depended on, and again in November 2026, when Cursor began encrypting the stored token ([#3](https://github.com/ClearMeasureLabs/Cursor-Usage-Status/issues/3)). This project is not affiliated with or endorsed by Cursor.
 
 ## Demo
 
@@ -122,6 +122,18 @@ Cycle length comes from the reported cycle start plus one month (with month-end 
   - macOS: `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`
   - Linux: `~/.config/Cursor/User/globalStorage/state.vscdb`
 
+### Encrypted sign-in token
+
+Behind a server-side feature gate (`cursor_auth_token_encryption_at_rest`), rolled out per account, Cursor stores `cursorAuth/accessToken` as `cursor-safe-storage:v1:` followed by an Electron safeStorage blob instead of a plaintext token. Cursor gives third-party extensions no API for the decrypted token, so the extension decrypts it itself, as the same OS user Cursor runs as:
+
+| Platform | How the key is obtained | Cipher | Status |
+| --- | --- | --- | --- |
+| **Windows** | `os_crypt.encrypted_key` from Cursor's `Local State`, unwrapped with DPAPI through Windows PowerShell | AES-256-GCM | Verified against a live account. |
+| **macOS** | The `Cursor Safe Storage` Keychain password via `security find-generic-password`; macOS asks once to allow access | PBKDF2-SHA1 → AES-128-CBC | **Untested on a real Mac.** Implemented from Chromium's `os_crypt` scheme and unit-tested with synthetic vectors. |
+| **Linux** | — | — | Not supported yet. The status bar says so instead of failing with HTTP 401. |
+
+Plaintext tokens (accounts the gate hasn't reached) are used as-is.
+
 ## Plan support
 
 | Plan | Status |
@@ -147,13 +159,15 @@ All settings are under `cursorUsageStatusbar.*`:
 ## Security notes
 
 - The access token is read from disk on each refresh and **not stored** by the extension.
+- When the token is encrypted, the unwrapped master key is held **in memory only** for the life of the extension host, so DPAPI or the Keychain isn't hit on every poll. It's never written to disk, and it's dropped and re-unwrapped if it stops decrypting. The wrapped key goes to PowerShell on stdin, never on the command line.
+- Cursor's database is opened **read-only**.
 - The token is sent **only over HTTPS** to the configured **`apiBaseUrl` origin** (enforced for every GET and POST).
 - The extension does not call any endpoint that returns other team members' personal data.
 - Errors are kept generic so tokens and local paths are not leaked in UI messages.
 
 ## Development
 
-Requires **Node 20.19+ or 22+**. The build toolchain (`@vscode/vsce` via `undici`, and `mocha` 12) declares `node >=20.18.1`; on Node 18 `vsce package` fails with `ReferenceError: File is not defined`.
+Requires **Node 22.13+**. The extension reads Cursor's database with the built-in `node:sqlite` module, which needs no flag from 22.13 on; the tests use it too. Cursor itself runs the extension on Node 24. `node:sqlite` replaced sql.js, which loaded the entire database (over 1 GB on long-lived installs) into memory on each read and couldn't see the uncheckpointed WAL.
 
 ```bash
 npm install

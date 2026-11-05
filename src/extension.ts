@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { readCursorAccessToken, readCursorTeamId } from './cursorAuth';
+import { readCursorLocalState, type CursorLocalState } from './cursorAuth';
+import { cursorTokenDecoder, TokenDecryptError } from './safeStorage';
 import { fetchCursorUsage } from './usageClient';
 import {
   buildUsage,
@@ -183,17 +184,26 @@ async function refreshUsage(): Promise<void> {
     return;
   }
 
-  let token: string | null;
-  let teamId: number | null = null;
+  let local: CursorLocalState;
   try {
-    token = await readCursorAccessToken();
-    teamId = await readCursorTeamId();
+    local = readCursorLocalState();
   } catch {
     fail('Could not read Cursor local database.');
     return;
   }
-  if (!token) {
+  if (!local.accessToken) {
     fail('Not signed in to Cursor (no access token found).');
+    return;
+  }
+  const teamId = local.teamId;
+
+  // Sending the stored ciphertext would only produce four opaque 401s, so stop here instead.
+  let token: string;
+  try {
+    token = await cursorTokenDecoder.decode(local.accessToken);
+  } catch (e) {
+    const reason = e instanceof TokenDecryptError ? e.message : 'decryption failed';
+    fail(`Cursor encrypts its stored sign-in token, and it could not be decrypted: ${reason}.`);
     return;
   }
 

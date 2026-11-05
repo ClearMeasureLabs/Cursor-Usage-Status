@@ -1,0 +1,64 @@
+name: Release
+
+# A merge to main that bumps package.json's version produces a tagged GitHub Release with the
+# VSIX attached. Merges that leave the version alone do nothing. Publishing to Open VSX stays
+# manual: download the VSIX from the release and run `npx ovsx publish <file> -p <token>`.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check whether this version is already released
+        id: version
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+            echo "v$version is already tagged; nothing to release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.version.outputs.release == 'true'
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - if: steps.version.outputs.release == 'true'
+        run: npm ci
+
+      - if: steps.version.outputs.release == 'true'
+        run: npm test
+
+      - if: steps.version.outputs.release == 'true'
+        name: Package VSIX
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: npx vsce package --out "cursor-usage-status-$VERSION.vsix"
+
+      - if: steps.version.outputs.release == 'true'
+        name: Tag and create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "v$VERSION" "cursor-usage-status-$VERSION.vsix" \
+            --target "$GITHUB_SHA" \
+            --title "v$VERSION" \
+            --generate-notes

@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Token decryption and database reads differ per OS, so test where users run Cursor.
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          # Cursor runs extensions on Node 24; node:sqlite needs 22.13+.
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  package:
+    name: Package VSIX
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Package
+        run: npx vsce package --out cursor-usage-status.vsix
+      - name: List VSIX contents
+        run: npx vsce ls

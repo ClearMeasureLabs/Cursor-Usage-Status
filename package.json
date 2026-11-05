@@ -2,7 +2,7 @@
   "name": "cursor-usage-status",
   "displayName": "Cursor Usage Status",
   "description": "Shows Cursor token-based plan spend against your monthly limit in the status bar. Unofficial; uses Cursor local auth and API.",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "publisher": "clearmeasurelabs",
   "repository": {
     "type": "git",

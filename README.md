@@ -179,6 +179,18 @@ npm test
 
 Press **F5** in this folder to launch the Extension Development Host (uses the default **Run Extension** configuration).
 
+## Releases
+
+On every pull request, CI runs `npm test` on Ubuntu, Windows and macOS, and checks that the VSIX packages.
+
+**A merge to main that bumps `version` in `package.json` is a release.** The Release workflow reruns the tests, packages the VSIX, creates the `v<version>` tag, and publishes a GitHub Release with the VSIX attached and notes generated from the merged PRs. A merge that leaves the version alone does nothing. To cut a release, bump the version in the PR:
+
+```bash
+npm version patch --no-git-tag-version
+```
+
+Publishing to Open VSX stays manual: download the VSIX from the GitHub Release and run `npx ovsx publish <file> -p <token>`.
+
 ## Packaging
 
 ```bash
